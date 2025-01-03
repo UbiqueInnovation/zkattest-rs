@@ -1,0 +1,8 @@
+[package]
+name = "group"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crypto-bigint = { version = "0.6.0-rc.6", features = ["alloc", "serde"] }
+sha2 = "0.10.8"
