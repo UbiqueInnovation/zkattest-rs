@@ -47,8 +47,6 @@ impl Coords<U320> for AffinePoint {
     }
 }
 
-pub struct ScalarElement(U320);
-
 impl Group<40> for ProjectivePoint {
     type FieldElement = U320;
 

@@ -6,7 +6,7 @@ use std::{
 };
 
 use crypto_bigint::{AddMod, Integer, InvMod, MulMod, NegMod, SubMod, U256, U320};
-use sha2::{digest::consts::U246, Digest};
+use sha2::Digest;
 
 pub trait ScalarElement<FieldElement, const N: usize> {
     const ZERO: FieldElement;
@@ -461,7 +461,7 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
     fn add(&self, rhs: Self) -> Self {
         let (x1, y1, z1) = (self.x(), self.y(), self.z());
         let (x2, y2, z2) = (rhs.x(), rhs.y(), rhs.z());
-        let (p, b) = (Self::PRIME_MOD, Self::b);
+        let b = Self::b;
 
         let mut t0;
         let mut t1;
@@ -548,7 +548,6 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
             hasher.update(WeierstrassGroup::to_bytes(&p));
         }
         let hash: Vec<u8> = hasher.finalize().to_vec();
-        let bytes_to_use = N.min(<D as Digest>::output_size());
         let mut scalar_bytes: [u8; N] = [0; N];
         if <D as Digest>::output_size() >= N {
             scalar_bytes.copy_from_slice(&hash[..N]);

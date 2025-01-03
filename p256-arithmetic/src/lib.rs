@@ -1,7 +1,7 @@
 use std::ops::{Add, Mul, Neg, Sub};
 
-use crypto_bigint::{ConstZero, Constants, NonZero, U256};
-use group::{Coords, Group, ScalarElement, WeierstrassGroup};
+use crypto_bigint::{NonZero, U256};
+use group::{Coords, Group, WeierstrassGroup};
 use sha2::Digest;
 
 pub type FieldElement = U256;
