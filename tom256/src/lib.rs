@@ -1,8 +1,9 @@
 use std::ops::{Add, Mul, Neg, Sub};
 
-use crypto_bigint::NonZero;
 pub use crypto_bigint::U320;
+use crypto_bigint::{NonZero, RandomMod};
 use group::{Coords, EdwardsGroup, Group};
+use rand::rngs::OsRng;
 use sha2::Digest;
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +74,10 @@ impl Group<40> for ProjectivePoint {
         }
     }
 
+    fn is_identity(&self) -> bool {
+        EdwardsGroup::is_identity(self)
+    }
+
     fn generator() -> Self {
         GENERATOR.into()
     }
@@ -82,10 +87,7 @@ impl Group<40> for ProjectivePoint {
     }
 
     fn random_scalar() -> Self::FieldElement {
-        let val: [u64; U320::LIMBS] = rand::random();
-        U320::from_words(val)
-            .rem(&Self::ORDER.to_nz().unwrap())
-            .into()
+        U320::random_mod(&mut OsRng, &Self::ORDER.to_nz().unwrap())
     }
 
     fn is_on_group(point: Self) -> bool {
@@ -108,16 +110,19 @@ impl Group<40> for ProjectivePoint {
         EdwardsGroup::to_bytes(self)
     }
 
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        ProjectivePoint::from_slice(bytes)
+    }
+
     fn hash_points<D: Digest>(pts: Vec<Self>) -> Self::FieldElement {
         EdwardsGroup::hash_points::<D>(pts)
     }
-
     fn to_affine(&self) -> Self::AffinePoint {
         EdwardsGroup::to_affine(self)
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        ProjectivePoint::from_slice(bytes)
+    fn to_nonzero(fe: Self::FieldElement) -> Self::NonZeroFieldElement {
+        fe.to_nz().unwrap()
     }
 }
 
@@ -386,7 +391,7 @@ impl From<U320> for Scalar {
 #[cfg(test)]
 mod tests {
 
-    use crypto_bigint::U320;
+    use crypto_bigint::{BitOps, U320};
     use group::{EdwardsGroup, Group};
 
     use crate::{ProjectivePoint, Scalar};
@@ -406,7 +411,7 @@ mod tests {
     }
     #[test]
     fn identity_is_identity() {
-        assert!(ProjectivePoint::identity().is_identity())
+        assert!(Group::is_identity(&ProjectivePoint::identity()))
     }
     #[test]
     fn identity_leaves_invariant() {
@@ -434,13 +439,13 @@ mod tests {
             + ProjectivePoint::generator();
         let test3 = &test2 - &test;
         assert_eq!(test, test2);
-        assert!(test3.is_identity());
+        assert!(Group::is_identity(&test3));
     }
     #[test]
     #[allow(non_snake_case)]
     fn cloudflare_tests() {
         let P1 = ProjectivePoint::ORDER * ProjectivePoint::generator();
-        assert!(P1.is_identity());
+        assert!(Group::is_identity(&P1));
         assert!(EdwardsGroup::is_on_group(P1));
 
         let mut k = ProjectivePoint::random_scalar();
@@ -454,7 +459,7 @@ mod tests {
         let r1 = ProjectivePoint::new_scalar(ProjectivePoint::ORDER - Scalar::from(1u128).0);
         let q = r1 * p;
         let r = p + q;
-        assert!(r.is_identity());
+        assert!(Group::is_identity(&r));
 
         let k1 = ProjectivePoint::random_scalar();
         let k2 = ProjectivePoint::random_scalar();
@@ -463,7 +468,7 @@ mod tests {
         let id = ProjectivePoint::identity();
         let b = id.to_bytes();
         let des_id = ProjectivePoint::from_slice(&b).unwrap();
-        assert!(des_id.is_identity());
+        assert!(Group::is_identity(&des_id));
         assert_eq!(id, des_id);
 
         for _ in 0..10 {
@@ -473,5 +478,9 @@ mod tests {
             let deser_p = ProjectivePoint::from_slice(&bs).unwrap();
             assert_eq!(pt, deser_p)
         }
+    }
+    #[test]
+    fn order() {
+        println!("{}", ProjectivePoint::PRIME_MOD.log2_bits())
     }
 }

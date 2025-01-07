@@ -1,5 +1,5 @@
 use std::{
-    io::{Cursor, Read},
+    io::Read,
     ops::{Add, Mul, Sub},
 };
 
@@ -13,8 +13,8 @@ pub struct Commitment<G, const N: usize>
 where
     G: Group<N>,
 {
-    commitment: G,
-    blinding: <G as Group<N>>::FieldElement,
+    pub commitment: G,
+    pub blinding: <G as Group<N>>::FieldElement,
 }
 
 impl<G, const N: usize> PartialEq for Commitment<G, N>
@@ -74,14 +74,26 @@ pub struct PedersenParams<G, const N: usize>
 where
     G: Group<N>,
 {
-    g: G,
-    h: G,
+    pub g: G,
+    pub h: G,
 }
 
 impl<G, const N: usize> PedersenParams<G, N>
 where
     G: Group<N>,
 {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = vec![];
+        out.extend(self.g.to_bytes());
+        out.extend(self.h.to_bytes());
+        out
+    }
+    pub fn deserialize(reader: &mut dyn Read) -> Option<Self> {
+        Some(Self {
+            g: read_point(reader)?,
+            h: read_point(reader)?,
+        })
+    }
     pub fn commit(&self, input: G::FieldElement) -> Commitment<G, N> {
         let r = G::random_scalar();
         let v = G::new_scalar(input);
@@ -117,8 +129,6 @@ where
 {
     pub fn serialize(&self) -> Vec<u8> {
         let mut output = vec![];
-        output.extend(self.params.g.to_bytes());
-        output.extend(self.params.h.to_bytes());
         output.extend(self.a_1.to_bytes());
         output.extend(self.a_2.to_bytes());
         output.extend(self.t_x.to_be_bytes());
@@ -126,12 +136,9 @@ where
         output.extend(self.t_r2.to_be_bytes());
         output
     }
-    pub fn deserialize(cursor: &mut dyn Read) -> Option<Self> {
+    pub fn deserialize(params: PedersenParams<G, N>, cursor: &mut dyn Read) -> Option<Self> {
         Some(Self {
-            params: PedersenParams {
-                g: read_point(cursor)?,
-                h: read_point(cursor)?,
-            },
+            params,
             a_1: read_point(cursor)?,
             a_2: read_point(cursor)?,
             t_x: read_field_element::<G, N>(cursor)?,
@@ -177,19 +184,18 @@ where
     pub fn verify(&self, c1: G, c2: G) -> bool {
         let c = G::hash_points::<Sha256>(vec![c1, c2, self.a_1, self.a_2]);
         let cc = G::new_scalar(c);
-        let a = self.params.g * self.t_x;
-        let b1 = self.params.h * self.t_r1;
+        let a_b1 = self.params.g.dblmul(self.t_x, self.params.h, self.t_r1);
         let cc1 = c1 * cc;
-        let sum1 = a + b1 + cc1 - self.a_1;
+        let sum1 = a_b1 + cc1 - self.a_1;
 
-        if !G::is_on_group(sum1) || sum1 != G::identity() {
+        if sum1 != G::identity() {
             return false;
         }
+        let a_b2 = self.params.g.dblmul(self.t_x, self.params.h, self.t_r2);
 
-        let b2 = self.params.h * self.t_r2;
         let cc2 = c2 * cc;
-        let sum2 = self.a_2 - cc2 - (a + b2);
-        if !G::is_on_group(sum2) || sum2 != G::identity() {
+        let sum2 = a_b2 + cc2 - self.a_2;
+        if sum2 != G::identity() {
             return false;
         }
         return true;
@@ -233,12 +239,9 @@ impl<G, const N: usize> MultiplicationProof<G, N>
 where
     G: Group<N>,
 {
-    pub fn deserialize(cursor: &mut dyn Read) -> Option<Self> {
+    pub fn deserialize(params: PedersenParams<G, N>, cursor: &mut dyn Read) -> Option<Self> {
         Some(Self {
-            params: PedersenParams {
-                g: read_point(cursor)?,
-                h: read_point(cursor)?,
-            },
+            params,
             c_4: read_point(cursor)?,
             a_x: read_point(cursor)?,
             a_y: read_point(cursor)?,
@@ -256,8 +259,6 @@ where
     }
     pub fn serialize(&self) -> Vec<u8> {
         let mut output = vec![];
-        output.extend(self.params.g.to_bytes());
-        output.extend(self.params.h.to_bytes());
         output.extend(self.c_4.to_bytes());
         output.extend(self.a_x.to_bytes());
         output.extend(self.a_y.to_bytes());
@@ -345,25 +346,25 @@ where
             cx, cy, cz, self.c_4, self.a_x, self.a_y, self.a_z, self.a_4_1, self.a_4_2,
         ]);
         let cc = G::new_scalar(c);
-        let sum = self.a_x - cc * cx - (self.params.g * self.t_x + self.params.h * self.t_rx);
-        if !G::is_on_group(sum) || sum != G::identity() {
+        let sum = cc * cx + (self.params.g.dblmul(self.t_x, self.params.h, self.t_rx)) - self.a_x;
+        if sum != G::identity() {
             return false;
         }
-        let sum = self.a_y - cc * cy - (self.params.g * self.t_y + self.params.h * self.t_ry);
-        if !G::is_on_group(sum) || sum != G::identity() {
+        let sum = cc * cy + (self.params.g.dblmul(self.t_y, self.params.h, self.t_ry)) - self.a_y;
+        if sum != G::identity() {
             return false;
         }
-        let sum = self.a_z - cc * cz - (self.params.g * self.t_z + self.params.h * self.t_rz);
-        if !G::is_on_group(sum) || sum != G::identity() {
+        let sum = cc * cz + (self.params.g.dblmul(self.t_z, self.params.h, self.t_rz)) - self.a_z;
+        if sum != G::identity() {
             return false;
         }
         let sum =
-            self.a_4_1 - cc * self.c_4 - (self.params.g * self.t_z + self.params.h * self.t_r4);
-        if !G::is_on_group(sum) || sum != G::identity() {
+            cc * self.c_4 + (self.params.g.dblmul(self.t_z, self.params.h, self.t_r4)) - self.a_4_1;
+        if sum != G::identity() {
             return false;
         }
-        let sum = self.a_4_2 - cc * self.c_4 - (cy * self.t_x);
-        if !G::is_on_group(sum) || sum != G::identity() {
+        let sum = cc * self.c_4 + (cy * self.t_x) - self.a_4_2;
+        if sum != G::identity() {
             return false;
         }
         true
@@ -393,8 +394,6 @@ where
 {
     pub fn serialize(&self) -> Vec<u8> {
         let mut output = vec![];
-        output.extend(self.params.g.to_bytes());
-        output.extend(self.params.h.to_bytes());
         output.extend(self.c_8.to_bytes());
         output.extend(self.c_10.to_bytes());
         output.extend(self.c_11.to_bytes());
@@ -407,22 +406,19 @@ where
         output.extend(self.pi_y.serialize());
         output
     }
-    pub fn deserialize(cursor: &mut (dyn Read)) -> Option<Self> {
+    pub fn deserialize(params: PedersenParams<G, N>, cursor: &mut (dyn Read)) -> Option<Self> {
         Some(Self {
-            params: PedersenParams {
-                g: read_point(cursor)?,
-                h: read_point(cursor)?,
-            },
+            params,
             c_8: read_point(cursor)?,
             c_10: read_point(cursor)?,
             c_11: read_point(cursor)?,
             c_13: read_point(cursor)?,
-            pi_8: MultiplicationProof::deserialize(cursor)?,
-            pi_10: MultiplicationProof::deserialize(cursor)?,
-            pi_11: MultiplicationProof::deserialize(cursor)?,
-            pi_13: MultiplicationProof::deserialize(cursor)?,
-            pi_x: EqualityProof::deserialize(cursor)?,
-            pi_y: EqualityProof::deserialize(cursor)?,
+            pi_8: MultiplicationProof::deserialize(params, cursor)?,
+            pi_10: MultiplicationProof::deserialize(params, cursor)?,
+            pi_11: MultiplicationProof::deserialize(params, cursor)?,
+            pi_13: MultiplicationProof::deserialize(params, cursor)?,
+            pi_x: EqualityProof::deserialize(params, cursor)?,
+            pi_y: EqualityProof::deserialize(params, cursor)?,
         })
     }
 
@@ -549,6 +545,63 @@ where
     beta2: G2::FieldElement,
     beta3: G2::FieldElement,
 }
+
+impl<G1: Group<N1>, const N1: usize, G2: Group<N2>, const N2: usize>
+    SignatureProofOdd<G1, N1, G2, N2>
+{
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = vec![];
+        result.extend(self.a.to_bytes());
+        result.extend(self.tx.to_bytes());
+        result.extend(self.ty.to_bytes());
+        result.extend(self.alpha.to_be_bytes());
+        result.extend(self.beta1.to_be_bytes());
+        result.extend(self.beta2.to_be_bytes());
+        result.extend(self.beta3.to_be_bytes());
+        result
+    }
+    pub fn deserialize(cursor: &mut (dyn Read)) -> Option<Self> {
+        Some(Self {
+            a: read_point(cursor)?,
+            tx: read_point(cursor)?,
+            ty: read_point(cursor)?,
+            alpha: read_field_element::<G1, N1>(cursor)?,
+            beta1: read_field_element::<G1, N1>(cursor)?,
+            beta2: read_field_element::<G2, N2>(cursor)?,
+            beta3: read_field_element::<G2, N2>(cursor)?,
+        })
+    }
+}
+
+impl<G1: Group<N1>, const N1: usize, G2: Group<N2>, const N2: usize>
+    SignatureProofEven<G1, N1, G2, N2>
+{
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = vec![];
+        result.extend(self.a.to_bytes());
+        result.extend(self.tx.to_bytes());
+        result.extend(self.ty.to_bytes());
+        result.extend(self.z.to_be_bytes());
+        result.extend(self.z2.to_be_bytes());
+        result.extend(self.proof.serialize());
+        result.extend(self.r1.to_be_bytes());
+        result.extend(self.r2.to_be_bytes());
+        result
+    }
+    pub fn deserialize(params: PedersenParams<G2, N2>, cursor: &mut (dyn Read)) -> Option<Self> {
+        Some(Self {
+            a: read_point(cursor)?,
+            tx: read_point(cursor)?,
+            ty: read_point(cursor)?,
+            z: read_field_element::<G1, N1>(cursor)?,
+            z2: read_field_element::<G1, N1>(cursor)?,
+            proof: PointAddProof::deserialize(params, cursor)?,
+            r1: read_field_element::<G2, N2>(cursor)?,
+            r2: read_field_element::<G2, N2>(cursor)?,
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct SignatureProofEven<G1, const N1: usize, G2, const N2: usize>
 where
@@ -574,6 +627,39 @@ where
     Odd(SignatureProofOdd<G1, N1, G2, N2>),
     Even(SignatureProofEven<G1, N1, G2, N2>),
     Empty,
+}
+
+impl<G1, const N1: usize, G2, const N2: usize> SignatureProof<G1, N1, G2, N2>
+where
+    G1: Group<N1>,
+    G2: Group<N2>,
+{
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = vec![];
+        match self {
+            SignatureProof::Odd(signature_proof_odd) => {
+                out.push(0u8);
+                out.extend(signature_proof_odd.serialize());
+            }
+            SignatureProof::Even(signature_proof_even) => {
+                out.push(1u8);
+                out.extend(signature_proof_even.serialize());
+            }
+            SignatureProof::Empty => out.push(2u8),
+        }
+        out
+    }
+    pub fn deserialize(params: PedersenParams<G2, N2>, reader: &mut dyn Read) -> Option<Self> {
+        let mut ty: [u8; 1] = [0; 1];
+        reader.read_exact(&mut ty).ok()?;
+        let ty = u8::from_be_bytes(ty);
+        match ty {
+            0 => Some(Self::Odd(SignatureProofOdd::deserialize(reader)?)),
+            1 => Some(Self::Even(SignatureProofEven::deserialize(params, reader)?)),
+            2 => Some(Self::Empty),
+            _ => None,
+        }
+    }
 }
 
 pub struct SignatureProofList<G1, const N1: usize, G2, const N2: usize>
@@ -611,6 +697,52 @@ where
     G1: Group<N1>,
     G2: Group<N2>,
 {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = vec![];
+        out.extend(self.g1_params.serialize());
+        out.extend(self.g2_params.serialize());
+        out.extend(self.r.to_bytes());
+        out.extend(self.c_lambda.to_bytes());
+        out.extend(self.p_x.to_bytes());
+        out.extend(self.p_y.to_bytes());
+        out.extend((self.proofs.len() as u64).to_be_bytes());
+        for a in &self.proofs {
+            out.extend(a.serialize());
+        }
+        out.extend((self.secparam as u64).to_be_bytes());
+        out
+    }
+    pub fn deserialize(reader: &mut dyn Read) -> Option<Self> {
+        let g1_params = PedersenParams::deserialize(reader)?;
+        let g2_params = PedersenParams::deserialize(reader)?;
+        let r = read_point(reader)?;
+        let c_lambda = read_point(reader)?;
+        let p_x = read_point(reader)?;
+        let p_y = read_point(reader)?;
+        let mut length_bytes: [u8; 8] = [0; 8];
+        reader.read_exact(&mut length_bytes).ok()?;
+        let length = u64::from_be_bytes(length_bytes);
+        let mut proofs = vec![];
+        for _ in 0..length {
+            proofs.push(SignatureProof::deserialize(g2_params, reader)?);
+        }
+        let mut secparam_bytes: [u8; 8] = [0; 8];
+        reader.read_exact(&mut secparam_bytes).ok()?;
+        let secparam = u64::from_be_bytes(secparam_bytes) as usize;
+        if secparam != proofs.len() {
+            return None;
+        }
+        Some(Self {
+            g1_params,
+            g2_params,
+            r,
+            c_lambda,
+            p_x,
+            p_y,
+            proofs,
+            secparam,
+        })
+    }
     pub fn from_signature(
         g1_params: PedersenParams<G1, N1>,
         g2_params: PedersenParams<G2, N2>,
@@ -632,7 +764,7 @@ where
         let sinv = s.inv_mod(&group_order).unwrap();
         let u1 = sinv.mul_mod(&z, &group_order);
         let u2 = sinv.mul_mod(&r, &group_order);
-        let R = G1::generator() * u1 + pub_key * u2;
+        let R = G1::generator().dblmul(u1, pub_key, u2);
 
         let rinv = r.inv_mod(&group_order).unwrap();
         let s1 = rinv.mul_mod(&s, &group_order);
@@ -832,20 +964,17 @@ where
                 let b = self.g1_params.h * beta1;
                 let sum = a - (t + b);
                 if !G1::is_on_group(sum) || sum != G1::identity() {
-                    println!("odd first");
                     return false;
                 }
                 let coord_t = t.to_affine();
                 let sx = G2::new_scalar(transform_field_element(coord_t.x()));
                 let sum = tx - (self.g2_params.g * sx + self.g2_params.h * beta2);
                 if !G2::is_on_group(sum) || sum != G2::identity() {
-                    println!("odd second");
                     return false;
                 }
                 let sy = G2::new_scalar(transform_field_element(coord_t.y()));
                 let sum = ty - (self.g2_params.g * sy + self.g2_params.h * beta3);
                 if !G2::is_on_group(sum) || sum != G2::identity() {
-                    println!("odd third");
                     return false;
                 }
                 true
@@ -863,7 +992,6 @@ where
                 let t1 = self.g1_params.g * z;
                 let sum = self.c_lambda + t1 + self.g1_params.h * z2 - a;
                 if !G1::is_on_group(sum) || sum != G1::identity() {
-                    println!("even first");
                     return false;
                 }
                 let t1 = t1 + q;
@@ -875,7 +1003,6 @@ where
                 let t1y = self.g2_params.g.dblmul(sy, self.g2_params.h, r2);
 
                 if !proof.verify(t1x, t1y, self.p_x, self.p_y, tx, ty) {
-                    println!("even second");
                     return false;
                 }
                 true
@@ -887,7 +1014,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
+    use std::{
+        io::{Cursor, Write},
+        time::Instant,
+    };
 
     use crypto_bigint::Encoding;
     use group::Group;
@@ -899,6 +1029,7 @@ mod tests {
     use rand::rngs::OsRng;
     use sha2::{Digest, Sha256};
     use tom256::{ProjectivePoint, U320};
+    use zip::write::SimpleFileOptions;
 
     use crate::pedersen::EqualityProof;
 
@@ -918,7 +1049,8 @@ mod tests {
 
         let mut serialized_proof = Cursor::new(proof.serialize());
         let deserialized_proof =
-            EqualityProof::<ProjectivePoint, 40>::deserialize(&mut serialized_proof).unwrap();
+            EqualityProof::<ProjectivePoint, 40>::deserialize(ped_param, &mut serialized_proof)
+                .unwrap();
         assert!(deserialized_proof.verify(c1.commitment, c2.commitment))
     }
     #[test]
@@ -934,8 +1066,11 @@ mod tests {
         assert!(proof.verify(cx.commitment, cy.commitment, cz.commitment));
 
         let mut serialized_proof = Cursor::new(proof.serialize());
-        let deserialized_proof =
-            MultiplicationProof::<ProjectivePoint, 40>::deserialize(&mut serialized_proof).unwrap();
+        let deserialized_proof = MultiplicationProof::<ProjectivePoint, 40>::deserialize(
+            ped_param,
+            &mut serialized_proof,
+        )
+        .unwrap();
         assert!(deserialized_proof.verify(cx.commitment, cy.commitment, cz.commitment));
     }
     #[test]
@@ -954,8 +1089,9 @@ mod tests {
         let p1y = params.commit(y1);
         let p2y = params.commit(y2);
         let p3y = params.commit(y3);
-
+        let start = Instant::now();
         let proof = PointAddProof::prove(params, x1, y1, x2, y2, x3, p1x, p1y, p2x, p2y, p3x, p3y);
+        let end = Instant::now();
         assert!(proof.verify(
             p1x.commitment,
             p1y.commitment,
@@ -966,9 +1102,11 @@ mod tests {
         ));
 
         let mut serialized_proof = Cursor::new(proof.serialize());
-        let deserialized_proof =
-            PointAddProof::<tom256::ProjectivePoint, 40>::deserialize(&mut serialized_proof)
-                .unwrap();
+        let deserialized_proof = PointAddProof::<tom256::ProjectivePoint, 40>::deserialize(
+            params,
+            &mut serialized_proof,
+        )
+        .unwrap();
         assert!(deserialized_proof.verify(
             p1x.commitment,
             p1y.commitment,
@@ -987,6 +1125,7 @@ mod tests {
         let signature = sig.to_vec();
         let params_nist = PedersenParams::<p256_arithmetic::ProjectivePoint, 32>::new();
         let params_tom = PedersenParams::<tom256::ProjectivePoint, 40>::new();
+        let start_proof = Instant::now();
         let proof = SignatureProofList::from_signature(
             params_nist,
             params_tom,
@@ -995,7 +1134,38 @@ mod tests {
             &pub_key,
             80,
         );
-        assert!(proof.verify_from_hash(&msg_hash))
+        let after_proof = Instant::now();
+        println!(
+            "proof generation: {}ms",
+            (after_proof - start_proof).as_millis()
+        );
+        let start_verification = Instant::now();
+        assert!(proof.verify_from_hash(&msg_hash));
+        let end_verification = Instant::now();
+        println!(
+            "proof verification: {}ms",
+            (end_verification - start_verification).as_millis()
+        );
+        let result = proof.serialize();
+        let output_zip = Cursor::new(vec![]);
+        let mut packed = zip::ZipWriter::new(output_zip);
+        packed
+            .start_file("proof", SimpleFileOptions::default())
+            .unwrap();
+        packed.write_all(&result).unwrap();
+        let packed = packed.finish().unwrap().into_inner();
+        let mut proof_serialized = Cursor::new(proof.serialize());
+        println!("--> {}", proof.serialize().len());
+        println!("--> {} compressed", packed.len());
+        println!("try deserializing");
+        let proof_deserialized = SignatureProofList::<
+            p256_arithmetic::ProjectivePoint,
+            32,
+            tom256::ProjectivePoint,
+            40,
+        >::deserialize(&mut proof_serialized)
+        .unwrap();
+        assert!(proof_deserialized.verify_from_hash(&msg_hash));
     }
 
     fn get_pts(p: p256::ProjectivePoint) -> (U320, U320) {

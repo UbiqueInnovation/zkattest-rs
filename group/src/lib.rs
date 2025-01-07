@@ -2,10 +2,10 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     marker::PhantomData,
-    ops::{Add, Mul, Neg, Sub},
+    ops::{Add, Div, Mul, Neg, Rem, Sub},
 };
 
-use crypto_bigint::{AddMod, Integer, InvMod, MulMod, NegMod, SubMod, U256, U320};
+use crypto_bigint::{AddMod, Integer, InvMod, MulMod, NegMod, SubMod, WrappingMul, U256, U320};
 use sha2::Digest;
 
 pub trait ScalarElement<FieldElement, const N: usize> {
@@ -27,6 +27,7 @@ pub trait ScalarElement<FieldElement, const N: usize> {
         Self::from_bytes(bytes)
     }
     fn from_bytes(bytes: [u8; N]) -> Self;
+    fn bits(&self) -> u32;
 }
 
 pub fn transform_field_element<
@@ -52,6 +53,10 @@ impl ScalarElement<U320, 40> for U320 {
     fn from_bytes(slice: [u8; Self::N]) -> Self {
         U320::from_be_slice(&slice)
     }
+
+    fn bits(&self) -> u32 {
+        self.bits()
+    }
 }
 
 impl ScalarElement<U256, 32> for U256 {
@@ -66,6 +71,10 @@ impl ScalarElement<U256, 32> for U256 {
     fn from_bytes(slice: [u8; Self::N]) -> Self {
         U256::from_be_slice(&slice)
     }
+
+    fn bits(&self) -> u32 {
+        self.bits()
+    }
 }
 
 pub trait Coords<FieldElement> {
@@ -79,6 +88,8 @@ where
         + ScalarElement<<Self as Group<N>>::FieldElement, N>
         + Mul<Self, Output = Self>
         + Integer
+        + Rem<<Self as Group<N>>::NonZeroFieldElement, Output = <Self as Group<N>>::FieldElement>
+        + Div<<Self as Group<N>>::NonZeroFieldElement, Output = <Self as Group<N>>::FieldElement>
         + PartialEq
         + Clone
         + Copy
@@ -90,6 +101,7 @@ where
     Self: Mul<<Self as Group<N>>::FieldElement, Output = Self>,
     Self: Clone + Copy + PartialEq + Debug + Sync + Send,
     <Self as Group<N>>::AffinePoint: Coords<Self::FieldElement>,
+    <Self as Group<N>>::NonZeroFieldElement: Clone + Copy,
 {
     type FieldElement;
     type NonZeroFieldElement;
@@ -99,6 +111,7 @@ where
     const PRIME_MOD: Self::FieldElement;
 
     fn identity() -> Self;
+    fn is_identity(&self) -> bool;
     fn generator() -> Self;
     fn new_scalar(s: Self::FieldElement) -> Self::FieldElement;
     fn random_scalar() -> Self::FieldElement;
@@ -110,6 +123,17 @@ where
     fn from_bytes(bytes: &[u8]) -> Option<Self>;
     fn hash_points<D: Digest>(pts: Vec<Self>) -> Self::FieldElement;
     fn to_affine(&self) -> Self::AffinePoint;
+    fn to_nonzero(fe: Self::FieldElement) -> Self::NonZeroFieldElement;
+    fn powe(fe: Self::FieldElement, exponent: u32) -> Self::FieldElement {
+        if exponent == 0 {
+            return Self::FieldElement::ONE;
+        }
+        let mut result = Self::FieldElement::ONE;
+        for _ in 1..exponent {
+            result = result.mul_mod(&fe, &Self::ORDER);
+        }
+        result
+    }
 }
 
 #[allow(non_upper_case_globals)]
@@ -161,6 +185,7 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
         l0.sub_mod(&r0, &Self::PRIME_MOD) == Self::FieldElement::ZERO
             && l1.sub_mod(&r1, &Self::PRIME_MOD) == Self::FieldElement::ZERO
     }
+    #[inline(always)]
     fn dbl(&self) -> Self {
         let other_a = self.x().mul_mod(&self.x(), &Self::PRIME_MOD);
         let B = self.y().mul_mod(&self.y(), &Self::PRIME_MOD);
@@ -181,6 +206,7 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
         let z3 = F.mul_mod(&G, &Self::PRIME_MOD);
         Self::new(x3, y3, t3, z3)
     }
+    #[inline(always)]
     fn is_identity(&self) -> bool {
         self.x() == Self::FieldElement::ZERO
             && self.y() != Self::FieldElement::ZERO
@@ -188,6 +214,7 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
             && self.z() != Self::FieldElement::ZERO
             && self.z() == self.y()
     }
+    #[inline(always)]
     fn dblmul(&self, left: Self::FieldElement, point: Self, right: Self::FieldElement) -> Self {
         let mut q = Self::identity();
         let k1 = left.to_be_bytes();
@@ -202,7 +229,8 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
             map2.insert(i, curr2);
             curr2 = curr2 + point;
         }
-        for b in 0..N {
+        // We skip the first 7 bytes as it is only used in tom256 currently
+        for b in 7..40 {
             let k1u = k1[b] / 16;
             let k1d = k1[b] % 16;
             let k2u = k2[b] / 16;
@@ -223,6 +251,7 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
         }
         q
     }
+    #[inline(always)]
     fn add(&self, rhs: Self) -> Self {
         let other_a = self.x().mul_mod(&rhs.x(), &Self::PRIME_MOD);
         let B = self.y().mul_mod(&rhs.y(), &Self::PRIME_MOD);
@@ -248,6 +277,7 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
         let z3 = F.mul_mod(&G, &Self::PRIME_MOD);
         Self::new(x3, y3, t3, z3)
     }
+    #[inline(always)]
     fn scalar_mul(&self, rhs: Self::FieldElement) -> Self {
         let mut q = Self::identity();
         let bytes = rhs.to_be_bytes();
@@ -257,7 +287,7 @@ pub trait EdwardsGroup<const N: usize>: Group<N> {
             map.insert(i, curr);
             curr = curr + *self;
         }
-        for b in bytes {
+        for b in &bytes[7..] {
             let upper = b / 16;
             let lower = b % 16;
             q = q.dbl();
@@ -333,6 +363,7 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
 
     fn new(x: Self::FieldElement, y: Self::FieldElement, z: Self::FieldElement) -> Self;
 
+    #[inline(always)]
     fn equal(&self, other: Self) -> bool {
         let x0z1 = self.x().mul_mod(&other.z(), &Self::PRIME_MOD);
         let x1z0 = other.x().mul_mod(&self.z(), &Self::PRIME_MOD);
@@ -340,21 +371,26 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
         let y1z0 = other.y().mul_mod(&self.z(), &Self::PRIME_MOD);
         x0z1 == x1z0 && y0z1 == y1z0
     }
+    #[inline(always)]
     fn neg(&self) -> Self {
         let y = self.y().neg_mod(&Self::PRIME_MOD);
         Self::new(self.x(), y, self.z())
     }
     fn to_bytes(&self) -> Vec<u8>;
 
+    #[inline(always)]
     fn fe2(x: Self::FieldElement) -> Self::FieldElement {
         x.mul_mod(&x, &Self::PRIME_MOD)
     }
+    #[inline(always)]
     fn addfe(x: Self::FieldElement, y: Self::FieldElement) -> Self::FieldElement {
         x.add_mod(&y, &Self::PRIME_MOD)
     }
+    #[inline(always)]
     fn subfe(x: Self::FieldElement, y: Self::FieldElement) -> Self::FieldElement {
         x.sub_mod(&y, &Self::PRIME_MOD)
     }
+    #[inline(always)]
     fn mulfe(x: Self::FieldElement, y: Self::FieldElement) -> Self::FieldElement {
         x.mul_mod(&y, &Self::PRIME_MOD)
     }
@@ -379,6 +415,7 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
         );
         t5 == Self::FieldElement::ZERO
     }
+    #[inline(always)]
     fn dbl(&self) -> Self {
         let (x, y, z) = (self.x(), self.y(), self.z());
         let b = Self::b;
@@ -423,6 +460,7 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
             && self.y() != Self::FieldElement::ZERO
             && self.z() == Self::FieldElement::ZERO
     }
+    #[inline(always)]
     fn dblmul(&self, left: Self::FieldElement, point: Self, right: Self::FieldElement) -> Self {
         let mut q = Self::identity();
         let k1 = left.to_be_bytes();
@@ -458,6 +496,7 @@ pub trait WeierstrassGroup<const N: usize>: Group<N> {
         }
         q
     }
+    #[inline(always)]
     fn add(&self, rhs: Self) -> Self {
         let (x1, y1, z1) = (self.x(), self.y(), self.z());
         let (x2, y2, z2) = (rhs.x(), rhs.y(), rhs.z());

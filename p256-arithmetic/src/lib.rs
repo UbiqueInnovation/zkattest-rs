@@ -1,7 +1,8 @@
 use std::ops::{Add, Mul, Neg, Sub};
 
-use crypto_bigint::{NonZero, U256};
+use crypto_bigint::{Limb, NonZero, RandomMod, U256};
 use group::{Coords, Group, WeierstrassGroup};
+use rand::rngs::OsRng;
 use sha2::Digest;
 
 pub type FieldElement = U256;
@@ -70,10 +71,7 @@ impl Group<32> for ProjectivePoint {
     }
 
     fn random_scalar() -> Self::FieldElement {
-        let val: [u64; U256::LIMBS] = rand::random();
-        U256::from_words(val)
-            .rem(&Self::ORDER.to_nz().unwrap())
-            .into()
+        U256::random_mod(&mut OsRng, &Self::ORDER.to_nz().unwrap())
     }
 
     fn is_on_group(point: Self) -> bool {
@@ -81,7 +79,7 @@ impl Group<32> for ProjectivePoint {
     }
 
     fn size_point_bytes() -> usize {
-        32
+        65
     }
 
     fn equal(&self, other: Self) -> bool {
@@ -96,6 +94,10 @@ impl Group<32> for ProjectivePoint {
         WeierstrassGroup::to_bytes(self)
     }
 
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        ProjectivePoint::from_slice(bytes)
+    }
+
     fn hash_points<D: Digest>(pts: Vec<Self>) -> Self::FieldElement {
         WeierstrassGroup::hash_points::<D>(pts)
     }
@@ -104,8 +106,12 @@ impl Group<32> for ProjectivePoint {
         WeierstrassGroup::to_affine(self)
     }
 
-    fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        ProjectivePoint::from_slice(bytes)
+    fn is_identity(&self) -> bool {
+        WeierstrassGroup::is_identity(self)
+    }
+
+    fn to_nonzero(fe: Self::FieldElement) -> Self::NonZeroFieldElement {
+        fe.to_nz().unwrap()
     }
 }
 
@@ -170,7 +176,7 @@ impl ProjectivePoint {
         Some(point.into())
     }
     pub fn to_bytes(&self) -> [u8; 65] {
-        if self.is_identity() {
+        if Group::is_identity(self) {
             return [0; 65];
         }
         let affine_point = Group::to_affine(self);
@@ -248,7 +254,7 @@ impl Mul<ProjectivePoint> for U256 {
 #[cfg(test)]
 mod tests {
 
-    use crypto_bigint::U256;
+    use crypto_bigint::{BitOps, U256};
     use group::{Group, WeierstrassGroup};
 
     use crate::ProjectivePoint;
@@ -268,7 +274,7 @@ mod tests {
     }
     #[test]
     fn identity_is_identity() {
-        assert!(ProjectivePoint::identity().is_identity())
+        assert!(Group::is_identity(&ProjectivePoint::identity()))
     }
     #[test]
     fn identity_leaves_invariant() {
@@ -299,13 +305,13 @@ mod tests {
             + ProjectivePoint::generator();
         let test3 = test2 - test;
         assert_eq!(test, test2);
-        assert!(test3.is_identity());
+        assert!(Group::is_identity(&test3));
     }
     #[test]
     #[allow(non_snake_case)]
     fn cloudflare_tests() {
         let P1 = ProjectivePoint::ORDER * ProjectivePoint::generator();
-        assert!(P1.is_identity());
+        assert!(Group::is_identity(&P1));
         assert!(WeierstrassGroup::is_on_group(P1));
         let mut k = ProjectivePoint::random_scalar();
         let mut p = k * ProjectivePoint::generator();
@@ -317,7 +323,7 @@ mod tests {
         let r1 = ProjectivePoint::new_scalar(ProjectivePoint::ORDER - U256::from_u8(1));
         let q = r1 * p;
         let r = p + q;
-        assert!(r.is_identity());
+        assert!(Group::is_identity(&r));
         let k1 = ProjectivePoint::random_scalar();
         let k2 = ProjectivePoint::random_scalar();
         let s = WeierstrassGroup::dblmul(&p, k1, q, k2);
@@ -325,7 +331,7 @@ mod tests {
         let id = ProjectivePoint::identity();
         let b = id.to_bytes();
         let des_id = ProjectivePoint::from_slice(&b).unwrap();
-        assert!(des_id.is_identity());
+        assert!(Group::is_identity(&des_id));
         assert_eq!(id, des_id);
 
         for _ in 0..10 {
@@ -335,5 +341,9 @@ mod tests {
             let deser_p = ProjectivePoint::from_slice(&bs).unwrap();
             assert_eq!(pt, deser_p)
         }
+    }
+    #[test]
+    fn order() {
+        println!("{}", ProjectivePoint::PRIME_MOD.bits());
     }
 }
