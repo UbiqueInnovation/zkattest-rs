@@ -1021,6 +1021,7 @@ dependencies = [
  "ark-bls12-381",
  "ark-ec",
  "ark-ff",
+ "ark-serialize",
  "ark-std",
  "criterion",
  "crypto-bigint 0.6.0-rc.6",

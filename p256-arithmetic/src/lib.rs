@@ -1,6 +1,6 @@
 use std::ops::{Add, Mul, Neg, Sub};
 
-use crypto_bigint::{Limb, NonZero, RandomMod, U256};
+use crypto_bigint::{NonZero, RandomMod, U256};
 use group::{Coords, Group, WeierstrassGroup};
 use rand::rngs::OsRng;
 use sha2::Digest;

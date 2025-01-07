@@ -671,8 +671,8 @@ where
     g2_params: PedersenParams<G2, N2>,
     r: G1,
     c_lambda: G1,
-    p_x: G2,
-    p_y: G2,
+    pub p_x: G2,
+    pub p_y: G2,
     proofs: Vec<SignatureProof<G1, N1, G2, N2>>,
     secparam: usize,
 }
@@ -750,7 +750,13 @@ where
         msg_hash: &[u8],
         public_key: &[u8],
         secparam: usize,
-    ) -> Self {
+    ) -> (
+        Self,
+        Commitment<G2, N2>,
+        Commitment<G2, N2>,
+        G2::FieldElement,
+        G2::FieldElement,
+    ) {
         use group::ScalarElement;
         let pub_key = G1::from_bytes(&public_key).unwrap();
         let pub_key_affine = pub_key.to_affine();
@@ -801,7 +807,13 @@ where
         q: G1,
         R: G1,
         secparam: usize,
-    ) -> Self {
+    ) -> (
+        Self,
+        Commitment<G2, N2>,
+        Commitment<G2, N2>,
+        G2::FieldElement,
+        G2::FieldElement,
+    ) {
         use group::ScalarElement;
         let mut alpha: Vec<G1::FieldElement> = vec![G1::FieldElement::ZERO; secparam];
         let mut r: Vec<G1::FieldElement> = vec![G1::FieldElement::ZERO; secparam];
@@ -903,17 +915,24 @@ where
                 }
             })
             .collect::<Vec<_>>();
-
-        SignatureProofList {
-            proofs: all_proofs,
-            secparam,
-            g1_params,
-            g2_params,
-            r: R,
-            c_lambda: cs.commitment,
-            p_x: px.commitment,
-            p_y: py.commitment,
-        }
+        let x_coord = transform_field_element(p.to_affine().x());
+        let y_coord = transform_field_element(p.to_affine().y());
+        (
+            SignatureProofList {
+                proofs: all_proofs,
+                secparam,
+                g1_params,
+                g2_params,
+                r: R,
+                c_lambda: cs.commitment,
+                p_x: px.commitment,
+                p_y: py.commitment,
+            },
+            px,
+            py,
+            x_coord,
+            y_coord,
+        )
     }
     pub fn verify_from_hash(&self, msg_hash: &[u8]) -> bool {
         use group::ScalarElement;
@@ -1089,9 +1108,7 @@ mod tests {
         let p1y = params.commit(y1);
         let p2y = params.commit(y2);
         let p3y = params.commit(y3);
-        let start = Instant::now();
         let proof = PointAddProof::prove(params, x1, y1, x2, y2, x3, p1x, p1y, p2x, p2y, p3x, p3y);
-        let end = Instant::now();
         assert!(proof.verify(
             p1x.commitment,
             p1y.commitment,
@@ -1126,7 +1143,7 @@ mod tests {
         let params_nist = PedersenParams::<p256_arithmetic::ProjectivePoint, 32>::new();
         let params_tom = PedersenParams::<tom256::ProjectivePoint, 40>::new();
         let start_proof = Instant::now();
-        let proof = SignatureProofList::from_signature(
+        let (proof, ..) = SignatureProofList::from_signature(
             params_nist,
             params_tom,
             &signature,

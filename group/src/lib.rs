@@ -5,7 +5,7 @@ use std::{
     ops::{Add, Div, Mul, Neg, Rem, Sub},
 };
 
-use crypto_bigint::{AddMod, Integer, InvMod, MulMod, NegMod, SubMod, WrappingMul, U256, U320};
+use crypto_bigint::{AddMod, Integer, InvMod, MulMod, NegMod, SubMod, U256, U320};
 use sha2::Digest;
 
 pub trait ScalarElement<FieldElement, const N: usize> {

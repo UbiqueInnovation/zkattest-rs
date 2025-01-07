@@ -1,6 +1,9 @@
+use std::io::Read;
+
 use ark_ec::pairing::Pairing;
 use ark_ec::PrimeGroup;
 use ark_ff::PrimeField;
+use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::UniformRand;
 use crypto_bigint::{AddMod, MulMod};
 use group::{Group, ScalarElement};
@@ -8,7 +11,7 @@ use num_bigint::BigUint;
 use rand::rngs::OsRng;
 use sha2::Sha256;
 
-use crate::pedersen::{Commitment, PedersenParams};
+use crate::pedersen::{read_point, Commitment, PedersenParams};
 
 pub struct DlEqPart<G1: Group<N1>, const N1: usize, BbsGroup: Pairing> {
     c_1_i: G1,
@@ -18,6 +21,33 @@ pub struct DlEqPart<G1: Group<N1>, const N1: usize, BbsGroup: Pairing> {
     z: G1::FieldElement,
     s_p: G1::FieldElement,
     s_q: BbsGroup::ScalarField,
+}
+
+impl<G1: Group<N1>, const N1: usize, BbsGroup: Pairing> DlEqPart<G1, N1, BbsGroup> {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = vec![];
+        result.extend(self.c_1_i.to_bytes());
+        self.c_2_i.serialize_uncompressed(&mut result).unwrap();
+        result.extend(self.k_p.to_bytes());
+        self.k_q.serialize_uncompressed(&mut result).unwrap();
+        result.extend(self.z.to_be_bytes());
+        result.extend(self.s_p.to_be_bytes());
+        self.s_q.serialize_uncompressed(&mut result).unwrap();
+        result
+    }
+    pub fn deserialize<R: Read>(mut reader: R) -> Option<Self> {
+        use crate::pedersen::read_field_element;
+        use ark_serialize::CanonicalDeserialize;
+        Some(Self {
+            c_1_i: read_point(&mut reader)?,
+            c_2_i: BbsGroup::G1::deserialize_uncompressed(&mut reader).ok()?,
+            k_p: read_point(&mut reader)?,
+            k_q: BbsGroup::G1::deserialize_uncompressed(&mut reader).ok()?,
+            z: read_field_element::<G1, N1>(&mut reader)?,
+            s_p: read_field_element::<G1, N1>(&mut reader)?,
+            s_q: BbsGroup::ScalarField::deserialize_uncompressed(&mut reader).ok()?,
+        })
+    }
 }
 
 #[allow(non_snake_case)]
@@ -50,6 +80,40 @@ impl<
         BbsGroup: Pairing,
     > DlEq<Bx, Bc, Bf, tau, G1, N1, BbsGroup>
 {
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut result = vec![];
+        result.extend(&self.g1_params.serialize());
+        result.extend(&self.g2_params.serialize());
+        result.extend(self.c1.to_bytes());
+        self.c2.serialize_uncompressed(&mut result).unwrap();
+        let len = (self.sub_parts.len() as u64).to_be_bytes();
+        result.extend(&len);
+        for sub_part in &self.sub_parts {
+            result.extend(sub_part.serialize());
+        }
+        result
+    }
+    pub fn deserialize<R: Read>(mut reader: R) -> Option<Self> {
+        let g1_params = PedersenParams::deserialize(&mut reader)?;
+        let g2_params = PairingPedersenParams::deserialize(&mut reader)?;
+        let c1 = read_point(&mut reader)?;
+        let c2 = BbsGroup::G1::deserialize_uncompressed(&mut reader).ok()?;
+        let mut sub_length = [0u8; 8];
+        reader.read_exact(&mut sub_length).unwrap();
+        let sub_length = u64::from_be_bytes(sub_length);
+        let mut sub_parts = vec![];
+        for _ in 0..sub_length {
+            sub_parts.push(DlEqPart::deserialize(&mut reader)?);
+        }
+        Some(Self {
+            g1_params,
+            g2_params,
+            c1,
+            c2,
+            sub_parts,
+        })
+    }
+    // we currently ignore tau, we would need it to achieve the needed 120 bit security
     pub fn prove(
         g1_params: PedersenParams<G1, N1>,
         g2_params: PairingPedersenParams<BbsGroup>,
@@ -227,6 +291,19 @@ pub struct PairingPedersenParams<BbsGroup: Pairing> {
     h: BbsGroup::G1,
 }
 impl<BbsGroup: Pairing> PairingPedersenParams<BbsGroup> {
+    pub fn serialize(&self) -> Vec<u8> {
+        use ark_serialize::CanonicalSerialize;
+        let mut result = vec![];
+        self.g.serialize_uncompressed(&mut result).unwrap();
+        self.h.serialize_uncompressed(&mut result).unwrap();
+        result
+    }
+    pub fn deserialize<R: Read>(mut reader: R) -> Option<Self> {
+        Some(Self {
+            g: BbsGroup::G1::deserialize_uncompressed(&mut reader).ok()?,
+            h: BbsGroup::G1::deserialize_uncompressed(&mut reader).ok()?,
+        })
+    }
     pub fn commit(&self, x: BbsGroup::ScalarField) -> PairingCommitment<BbsGroup> {
         let blinding = BbsGroup::ScalarField::rand(&mut OsRng);
         PairingCommitment {
@@ -257,6 +334,8 @@ impl<BbsGroup: Pairing> PairingPedersenParams<BbsGroup> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use ark_bls12_381::Bls12_381;
     use ark_ec::pairing::Pairing;
     use group::Group;
@@ -283,6 +362,14 @@ mod tests {
         let proof = DlEq::<180, 64, 8, 2, _, 40, _>::prove(g1_params, g2_params, c1, c2, x);
         println!("proof done, verify");
         assert!(proof.verify(c1.commitment, c2.commitment));
+
+        let mut serialized_proof = Cursor::new(proof.serialize());
+        let deserialzied_proof =
+            DlEq::<180, 64, 8, 2, tom256::ProjectivePoint, 40, Bls12_381>::deserialize(
+                &mut serialized_proof,
+            )
+            .unwrap();
+        assert!(deserialzied_proof.verify(c1.commitment, c2.commitment));
     }
     #[test]
     fn inequality() {

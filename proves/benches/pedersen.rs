@@ -22,7 +22,7 @@ fn zk_attest_proof(msg: Vec<u8>, mut kp: SigningKey) -> Vec<u8> {
     let signature = sig.to_vec();
     let params_nist = PedersenParams::<p256_arithmetic::ProjectivePoint, 32>::new();
     let params_tom = PedersenParams::<tom256::ProjectivePoint, 40>::new();
-    let proof = SignatureProofList::from_signature(
+    let (proof, ..) = SignatureProofList::from_signature(
         params_nist,
         params_tom,
         &signature,
