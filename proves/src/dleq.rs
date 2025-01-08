@@ -1,7 +1,7 @@
 use std::io::Read;
 
 use ark_ec::pairing::Pairing;
-use ark_ec::PrimeGroup;
+use ark_ec::Group as PrimeGroup;
 use ark_ff::PrimeField;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::UniformRand;
@@ -62,9 +62,9 @@ pub struct DlEq<
     BbsGroup: Pairing,
 > {
     g1_params: PedersenParams<G1, N1>,
-    g2_params: PairingPedersenParams<BbsGroup>,
+    pub g2_params: PairingPedersenParams<BbsGroup>,
     c1: G1,
-    c2: BbsGroup::G1,
+    pub c2: BbsGroup::G1,
     sub_parts: Vec<DlEqPart<G1, N1, BbsGroup>>,
 }
 
@@ -287,8 +287,8 @@ pub struct PairingCommitment<BbsGroup: Pairing> {
 }
 #[derive(Copy, Clone)]
 pub struct PairingPedersenParams<BbsGroup: Pairing> {
-    g: BbsGroup::G1,
-    h: BbsGroup::G1,
+    pub g: BbsGroup::G1,
+    pub h: BbsGroup::G1,
 }
 impl<BbsGroup: Pairing> PairingPedersenParams<BbsGroup> {
     pub fn serialize(&self) -> Vec<u8> {
