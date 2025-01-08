@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+    <head>
+        <script type="module">
+            import init, {
+                verify_zkattest,
+                Signer,
+            } from "../pkg/proves_wasm.js";
+            async function run() {
+                await init();
+                window.Signer = Signer;
+                window.verifyZkAttest = verify_zkattest;
+            }
+            run();
+        </script>
+    </head>
+</html>
