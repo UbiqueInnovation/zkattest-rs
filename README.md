@@ -1,4 +1,4 @@
-# BBS Device Binding using conventional P256 Signature
+# BBS Device Binding using conventional P256 Signature 
 
 ## Motivation
 
@@ -12,6 +12,7 @@ Here, we demonstrate one possibility of using different ZKP, to bind a BBS signa
 
 It closely resembles the "conventional" key binding via linked-secrets, and as such can be removed as soon as cryptographic processors have support for it.
 
+# Secure Hardware Interoperability Extension for Link-Data Secrets (SHIELDS)
 ## Idea
 
 To bind a BBS signature to a secret-key in the secure element (SE), we can only work with available primitives -- P256. As the order (size) of the P256 base field (the field in which the coordinates of the elliptic curve points rely) order is smaller than the group order of the BLS12381 group, we can represent the coordinates of the public key point as scalars in the BLS12381 group.
