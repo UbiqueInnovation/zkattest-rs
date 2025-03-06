@@ -1,4 +1,7 @@
 # BBS Device Binding using conventional P256 Signature 
+> Note: This implementation is merely a demonstration of the feasibility of the proposed protocol. For a more "production ready" implementation have a look at https://github.com/docknetwork/crypto/tree/main/equality_across_groups, which includes various improvements by Lovesh Harchandani.
+
+> Note: We were pointed to https://eprint.iacr.org/2023/1595 which shows some flaws in the original implementation of [1]. The problems are mainly due to the performance improvements (using a random sub-set of the bits in the challenge during one step of the proof protocol), and hence don't invalidate the idea. Furthermore, in their paper they provide a Rust implementation of the modified ZK-Attest protocol.
 
 ## Motivation
 
